@@ -185,15 +185,23 @@ def run_settle() -> dict:
             used[target] += r["amount_cents"]
             account_net[r["account_id"]] = account_net.get(r["account_id"], 0) - r["amount_cents"]
             conn.execute(
-                "UPDATE ledger_entries SET status = '已归并', settle_run_id = ? WHERE id = ?",
-                (run_id, r["id"]),
+                """
+                UPDATE ledger_entries
+                SET status = '已归并', settle_run_id = ?, settled_at = COALESCE(settled_at, ?)
+                WHERE id = ?
+                """,
+                (run_id, now, r["id"]),
             )
             settled += 1
 
         for f in forwards:
             conn.execute(
-                "UPDATE ledger_entries SET status = '已归并', settle_run_id = ? WHERE id = ?",
-                (run_id, f["id"]),
+                """
+                UPDATE ledger_entries
+                SET status = '已归并', settle_run_id = ?, settled_at = COALESCE(settled_at, ?)
+                WHERE id = ?
+                """,
+                (run_id, now, f["id"]),
             )
             settled += 1
 

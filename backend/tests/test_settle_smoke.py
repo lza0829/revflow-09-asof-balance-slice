@@ -14,6 +14,10 @@ db_path = Path(os.environ["DATA_DIR"]) / "app.db"
 if db_path.exists():
     db_path.unlink()
 
+# 各测试模块用各自 DATA_DIR：导入前清掉已缓存的 app.*，避免串库
+for _m in [m for m in sys.modules if m == "app" or m.startswith("app.")]:
+    del sys.modules[_m]
+
 from app.main import app  # noqa: E402
 
 

@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   booked_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT '待归并',
   note TEXT NOT NULL DEFAULT '',
-  settle_run_id INTEGER
+  settle_run_id INTEGER,
+  settled_at TEXT
 );
 CREATE TABLE IF NOT EXISTS quarantine_items (
   id INTEGER PRIMARY KEY,
@@ -58,12 +59,50 @@ CREATE TABLE IF NOT EXISTS verify_reports (
   detail_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+-- as-of 余额切片：切片头 + 不可变按账户明细快照（落库形态二选一，本仓选此形态）
+CREATE TABLE IF NOT EXISTS asof_slices (
+  id INTEGER PRIMARY KEY,
+  cutoff_at TEXT NOT NULL,
+  account_count INTEGER NOT NULL,
+  forward_cents INTEGER NOT NULL,
+  reversal_cents INTEGER NOT NULL,
+  net_cents INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS asof_slice_lines (
+  id INTEGER PRIMARY KEY,
+  slice_id INTEGER NOT NULL REFERENCES asof_slices(id),
+  account_id INTEGER NOT NULL REFERENCES accounts(id),
+  account_code TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  forward_cents INTEGER NOT NULL,
+  reversal_cents INTEGER NOT NULL,
+  net_cents INTEGER NOT NULL,
+  UNIQUE(slice_id, account_id)
+);
+-- 切片一旦落库不可改写、不可删除；新切片只能以新 id 追加
+CREATE TRIGGER IF NOT EXISTS asof_slices_no_update BEFORE UPDATE ON asof_slices
+BEGIN SELECT RAISE(ABORT, 'as-of 切片头不可改写'); END;
+CREATE TRIGGER IF NOT EXISTS asof_slices_no_delete BEFORE DELETE ON asof_slices
+BEGIN SELECT RAISE(ABORT, 'as-of 切片头不可删除'); END;
+CREATE TRIGGER IF NOT EXISTS asof_slice_lines_no_update BEFORE UPDATE ON asof_slice_lines
+BEGIN SELECT RAISE(ABORT, 'as-of 切片明细不可改写'); END;
+CREATE TRIGGER IF NOT EXISTS asof_slice_lines_no_delete BEFORE DELETE ON asof_slice_lines
+BEGIN SELECT RAISE(ABORT, 'as-of 切片明细不可删除'); END;
 """
+
+
+def _migrate(conn) -> None:
+    """旧库补列：ledger_entries.settled_at 记录首次变为「已归并」的时刻。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(ledger_entries)")}
+    if "settled_at" not in cols:
+        conn.execute("ALTER TABLE ledger_entries ADD COLUMN settled_at TEXT")
 
 
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         n = conn.execute("SELECT COUNT(*) AS c FROM accounts").fetchone()["c"]
         if n:
             return
